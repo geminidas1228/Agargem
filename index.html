@@ -1,0 +1,869 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <title>Agar.io Mobile</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #0b0b0f;
+            color: #fff;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-touch-callout: none;
+            touch-action: manipulation;
+            cursor: crosshair;
+            position: fixed;
+            width: 100%;
+            height: 100%;
+        }
+        canvas {
+            display: block;
+            position: absolute;
+            top: 0;
+            left: 0;
+            touch-action: none;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        #mass-panel {
+            position: absolute;
+            top: 15px; left: 15px;
+            background: rgba(0,0,0,0.6);
+            padding: 10px 16px;
+            border-radius: 12px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        #mass-panel .label { font-size: 9px; text-transform: uppercase; letter-spacing: 0.1em; color: #aaa; }
+        #mass-panel .value { font-size: 30px; font-weight: 800; line-height: 1; transition: color 0.3s; }
+        .growing { color: #5f6; } .shrinking { color: #f55; }
+
+        #leaderboard {
+            position: absolute;
+            top: 15px; right: 15px;
+            background: rgba(0,0,0,0.6);
+            padding: 12px; border-radius: 12px;
+            width: 180px; backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        h2 { margin:0 0 6px 0; font-size:12px; text-align:center; border-bottom:1px solid #444; padding-bottom:4px; }
+        #lb-list { list-style:none; padding:0; margin:0; font-size:11px; line-height:1.7; }
+        #lb-list li { display:flex; align-items:center; gap:5px; }
+        .dot { width:7px; height:7px; border-radius:50%; display:inline-block; }
+
+        #instructions {
+            position: absolute;
+            bottom: 15px; left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.6);
+            padding: 8px 16px; border-radius: 20px;
+            font-size: 10px; backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.1);
+            white-space: nowrap;
+        }
+        .key { background:#fff; color:#000; padding:1px 5px; border-radius:3px; font-weight:bold; }
+
+        #death-overlay {
+            position: absolute;
+            top:0; left:0; width:100%; height:100%;
+            background: rgba(0,0,0,0.8);
+            display:flex; flex-direction:column; align-items:center; justify-content:center;
+            pointer-events: all; opacity:0; transition: opacity 0.5s;
+            z-index: 100;
+        }
+        #death-overlay.active { opacity:1; }
+        #death-overlay h1 { font-size:40px; color:#f44; }
+        #death-overlay button {
+            margin-top:15px; padding:10px 25px; font-size:16px;
+            border:none; border-radius:20px; cursor:pointer; background:#fff; color:#000; font-weight:bold;
+        }
+
+        /* Botones táctiles (solo visibles en móvil) */
+        .touch-btn {
+            position: absolute;
+            pointer-events: all;
+            background: rgba(255,255,255,0.15);
+            border: 2px solid rgba(255,255,255,0.4);
+            border-radius: 50%;
+            color: #fff;
+            font-weight: bold;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 20;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+            transition: background 0.1s;
+        }
+        .touch-btn:active {
+            background: rgba(255,255,255,0.35);
+        }
+        #split-btn {
+            bottom: 130px; right: 25px;
+            width: 65px; height: 65px;
+            font-size: 14px;
+        }
+        #eject-btn {
+            bottom: 40px; right: 25px;
+            width: 65px; height: 65px;
+            font-size: 12px;
+        }
+        @media (max-width: 768px) {
+            #leaderboard { width: 150px; padding: 8px 10px; }
+            #leaderboard h2 { font-size: 11px; }
+            #lb-list { font-size: 10px; }
+            #mass-panel { padding: 8px 12px; }
+            #mass-panel .value { font-size: 24px; }
+            #instructions { font-size: 9px; bottom: 10px; padding: 6px 12px; }
+            .touch-btn { display: flex; }
+        }
+        @media (pointer: coarse) {
+            .touch-btn { display: flex; }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="ui-layer">
+        <div id="mass-panel"><div class="label">Masa total</div><div class="value" id="mass-value">20</div></div>
+        <div id="leaderboard"><h2>🏆 CLASIFICACIÓN</h2><ul id="lb-list"></ul></div>
+        <div id="instructions">
+            <span class="key">Joystick</span> Mover &nbsp;
+            <span class="key">Dividir</span> &nbsp;
+            <span class="key">Expulsar</span>
+        </div>
+        <div id="death-overlay">
+            <h1>💀 Has sido devorado</h1>
+            <p style="font-size:20px;">Masa final: <span id="final-mass">0</span></p>
+            <button id="restart-btn">🔄 Jugar de nuevo</button>
+        </div>
+    </div>
+
+    <!-- Botones táctiles -->
+    <div class="touch-btn" id="split-btn">⚡<br>Dividir</div>
+    <div class="touch-btn" id="eject-btn">💨<br>Expulsar</div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        let width = window.innerWidth, height = window.innerHeight;
+        canvas.width = width; canvas.height = height;
+        window.addEventListener('resize', () => {
+            width = window.innerWidth; height = window.innerHeight;
+            canvas.width = width; canvas.height = height;
+        });
+
+        // Constantes
+        const MAP_SIZE = 8000;
+        const GRID_SIZE = 300;
+        const FOOD_COUNT = 2000;
+        const SUPER_FOOD_COUNT = 80;
+        const VIRUS_COUNT = 50;
+        const BOT_COUNT = 25;
+        const MAX_CELLS = 16;
+        const MIN_SPLIT_MASS = 35;
+        const EJECT_COST = 18;
+        const EJECT_MASS = 14;
+        const VIRUS_BASE_MASS = 110;
+        const VIRUS_EXPLODE_THRESHOLD = VIRUS_BASE_MASS * 1.5;
+
+        // === DETECCIÓN DE DISPOSITIVO TÁCTIL ===
+        const isTouchDevice = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+
+        // === ESTADO DEL JOYSTICK VIRTUAL ===
+        let joystickActive = false;
+        let joystickId = null;
+        let joystickBaseX = 0, joystickBaseY = 0;
+        let joystickStickX = 0, joystickStickY = 0;
+        const joystickRadius = 60;
+        const joystickBaseRadius = 50;
+        const joystickMaxDist = 40;
+
+        // === INPUT: RATÓN (escritorio) ===
+        let mouseX = width/2, mouseY = height/2;
+        let mouseOnCanvas = false;
+        canvas.addEventListener('mousemove', e => {
+            if (isTouchDevice) return;
+            mouseX = e.clientX; mouseY = e.clientY;
+            mouseOnCanvas = true;
+        });
+        canvas.addEventListener('mouseenter', () => { if (!isTouchDevice) mouseOnCanvas = true; });
+        canvas.addEventListener('mouseleave', () => { if (!isTouchDevice) mouseOnCanvas = false; });
+
+        // === INPUT: TÁCTIL (móvil) ===
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            for (const touch of e.changedTouches) {
+                const tx = touch.clientX, ty = touch.clientY;
+                // Si el toque está en la mitad izquierda de la pantalla → joystick
+                if (tx < width * 0.6 && ty > height * 0.3) {
+                    joystickActive = true;
+                    joystickId = touch.identifier;
+                    joystickBaseX = tx;
+                    joystickBaseY = ty;
+                    joystickStickX = tx;
+                    joystickStickY = ty;
+                }
+                // Si el toque está en la mitad derecha → mover directamente (como mouse)
+                else if (tx > width * 0.4) {
+                    mouseX = tx; mouseY = ty;
+                    mouseOnCanvas = true;
+                }
+            }
+        }, { passive: false });
+
+        canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            for (const touch of e.changedTouches) {
+                if (touch.identifier === joystickId && joystickActive) {
+                    let dx = touch.clientX - joystickBaseX;
+                    let dy = touch.clientY - joystickBaseY;
+                    const dist = Math.hypot(dx, dy);
+                    if (dist > joystickMaxDist) {
+                        dx = dx / dist * joystickMaxDist;
+                        dy = dy / dist * joystickMaxDist;
+                    }
+                    joystickStickX = joystickBaseX + dx;
+                    joystickStickY = joystickBaseY + dy;
+                }
+                // Si no es el joystick, mover directamente
+                if (touch.identifier !== joystickId) {
+                    mouseX = touch.clientX; mouseY = touch.clientY;
+                    mouseOnCanvas = true;
+                }
+            }
+        }, { passive: false });
+
+        canvas.addEventListener('touchend', (e) => {
+            for (const touch of e.changedTouches) {
+                if (touch.identifier === joystickId) {
+                    joystickActive = false;
+                    joystickId = null;
+                    joystickStickX = joystickBaseX;
+                    joystickStickY = joystickBaseY;
+                }
+            }
+            // Si no hay más toques, el mouse virtual se detiene
+            if (e.touches.length === 0) {
+                mouseOnCanvas = false;
+            }
+        });
+
+        // === BOTONES TÁCTILES ===
+        const splitBtn = document.getElementById('split-btn');
+        const ejectBtn = document.getElementById('eject-btn');
+        splitBtn.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (playerEntity && playerEntity.cells.length > 0) splitEntity(playerEntity);
+        });
+        ejectBtn.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (playerEntity && playerEntity.cells.length > 0) ejectMass(playerEntity);
+        });
+        // También con ratón (por si acaso)
+        splitBtn.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            if (playerEntity && playerEntity.cells.length > 0) splitEntity(playerEntity);
+        });
+        ejectBtn.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            if (playerEntity && playerEntity.cells.length > 0) ejectMass(playerEntity);
+        });
+
+        // === TECLADO (escritorio) ===
+        window.addEventListener('keydown', e => {
+            if (e.code === 'Space') { e.preventDefault(); if (playerEntity && playerEntity.cells.length > 0) splitEntity(playerEntity); }
+            if (e.key === 'w' || e.key === 'W' || e.key === '2') { if (playerEntity && playerEntity.cells.length > 0) ejectMass(playerEntity); }
+        });
+
+        document.getElementById('restart-btn').addEventListener('click', () => {
+            document.getElementById('death-overlay').classList.remove('active');
+            restartGame();
+        });
+
+        // === Utilidades ===
+        function getRadius(mass) { return Math.sqrt(mass * 100 / Math.PI); }
+        function randomColor() { return `hsl(${Math.random() * 360}, 60%, 52%)`; }
+        function dist(x1,y1,x2,y2) { return Math.hypot(x2-x1, y2-y1); }
+
+        // === Spatial Grid ===
+        class SpatialGrid {
+            constructor() {
+                this.cols = Math.ceil(MAP_SIZE / GRID_SIZE);
+                this.rows = Math.ceil(MAP_SIZE / GRID_SIZE);
+                this.foodCells = Array.from({length: this.cols * this.rows}, () => []);
+                this.superFoodCells = Array.from({length: this.cols * this.rows}, () => []);
+                this.virusCells = Array.from({length: this.cols * this.rows}, () => []);
+            }
+            getCellIndex(x, y) {
+                const col = Math.floor(x / GRID_SIZE);
+                const row = Math.floor(y / GRID_SIZE);
+                return Math.min(row * this.cols + col, this.foodCells.length - 1);
+            }
+            addFood(f) { this.foodCells[this.getCellIndex(f.x, f.y)].push(f); }
+            removeFood(f, idx = null) {
+                if (idx === null) idx = this.getCellIndex(f.x, f.y);
+                const arr = this.foodCells[idx]; const i = arr.indexOf(f);
+                if (i >= 0) arr.splice(i, 1);
+            }
+            addSuperFood(sf) { this.superFoodCells[this.getCellIndex(sf.x, sf.y)].push(sf); }
+            removeSuperFood(sf, idx = null) {
+                if (idx === null) idx = this.getCellIndex(sf.x, sf.y);
+                const arr = this.superFoodCells[idx]; const i = arr.indexOf(sf);
+                if (i >= 0) arr.splice(i, 1);
+            }
+            addVirus(v) { this.virusCells[this.getCellIndex(v.x, v.y)].push(v); }
+            removeVirus(v) {
+                const idx = this.getCellIndex(v.x, v.y);
+                const arr = this.virusCells[idx]; const i = arr.indexOf(v);
+                if (i >= 0) arr.splice(i, 1);
+            }
+            getNearbyFoods(x, y, radius) {
+                const result = [];
+                const minCol = Math.floor((x - radius) / GRID_SIZE);
+                const maxCol = Math.floor((x + radius) / GRID_SIZE);
+                const minRow = Math.floor((y - radius) / GRID_SIZE);
+                const maxRow = Math.floor((y + radius) / GRID_SIZE);
+                for (let r = minRow; r <= maxRow; r++) {
+                    for (let c = minCol; c <= maxCol; c++) {
+                        if (r < 0 || r >= this.rows || c < 0 || c >= this.cols) continue;
+                        const idx = r * this.cols + c;
+                        result.push(...this.foodCells[idx]);
+                        result.push(...this.superFoodCells[idx]);
+                    }
+                }
+                return result;
+            }
+            getNearbyViruses(x, y, radius) {
+                const result = [];
+                const minCol = Math.floor((x - radius) / GRID_SIZE);
+                const maxCol = Math.floor((x + radius) / GRID_SIZE);
+                const minRow = Math.floor((y - radius) / GRID_SIZE);
+                const maxRow = Math.floor((y + radius) / GRID_SIZE);
+                for (let r = minRow; r <= maxRow; r++) {
+                    for (let c = minCol; c <= maxCol; c++) {
+                        if (r < 0 || r >= this.rows || c < 0 || c >= this.cols) continue;
+                        const idx = r * this.cols + c;
+                        result.push(...this.virusCells[idx]);
+                    }
+                }
+                return result;
+            }
+        }
+
+        // === Clases del juego ===
+        class Food {
+            constructor() { this.x = Math.random()*MAP_SIZE; this.y = Math.random()*MAP_SIZE; this.mass = 3; this.radius = getRadius(3); this.color = randomColor(); }
+        }
+        class SuperFood {
+            constructor() { this.x = Math.random()*MAP_SIZE; this.y = Math.random()*MAP_SIZE; this.mass = 14; this.radius = getRadius(14); this.color = randomColor(); this.pulse = Math.random()*Math.PI*2; }
+        }
+        class Virus {
+            constructor(grid) { this.x = Math.random()*MAP_SIZE; this.y = Math.random()*MAP_SIZE; this.mass = VIRUS_BASE_MASS; this.radius = getRadius(this.mass); this.angle = Math.random()*Math.PI*2; if (grid) grid.addVirus(this); }
+            updateRadius() { this.radius = getRadius(this.mass); }
+        }
+        class EjectedMass {
+            constructor(x,y,angle,color) { this.x=x; this.y=y; this.mass=EJECT_MASS; this.radius=getRadius(EJECT_MASS); this.color=color; this.vx=Math.cos(angle)*18; this.vy=Math.sin(angle)*18; this.life=300; }
+            update() { this.vx*=0.92; this.vy*=0.92; this.x+=this.vx; this.y+=this.vy; this.x=Math.max(0,Math.min(MAP_SIZE,this.x)); this.y=Math.max(0,Math.min(MAP_SIZE,this.y)); this.life--; }
+            get alive() { return this.life>0; }
+        }
+        class Cell {
+            constructor(x,y,mass,color,owner) { this.x=x; this.y=y; this.mass=mass; this.color=color; this.owner=owner; this.vx=0; this.vy=0; this.cooldown=0; this.visualRadius=getRadius(mass); }
+            get radius() { return getRadius(this.mass); }
+            update(targetX, targetY) {
+                this.visualRadius += (this.radius - this.visualRadius) * 0.15;
+                const dx = targetX - this.x, dy = targetY - this.y;
+                const d = Math.hypot(dx, dy);
+                if (d > 1) {
+                    const speed = Math.max(2.2, 10 - this.radius/40);
+                    this.x += (dx/d) * speed;
+                    this.y += (dy/d) * speed;
+                }
+                this.vx *= 0.85; this.vy *= 0.85;
+                this.x += this.vx; this.y += this.vy;
+                this.x = Math.max(this.radius, Math.min(MAP_SIZE - this.radius, this.x));
+                this.y = Math.max(this.radius, Math.min(MAP_SIZE - this.radius, this.y));
+                if (this.cooldown > 0) this.cooldown--;
+            }
+        }
+        class Entity {
+            constructor(x,y,mass,name,isBot=false) {
+                this.name = name; this.color = randomColor(); this.isBot = isBot;
+                this.cells = [new Cell(x,y,mass,this.color,this)];
+                this.targetX = x; this.targetY = y;
+                this.aiTimer = 0; this.lastSplit = 0; this.lastEject = 0;
+            }
+            get totalMass() { return this.cells.reduce((s,c)=>s+c.mass,0); }
+            get centroid() {
+                if (this.cells.length===0) return {x:MAP_SIZE/2,y:MAP_SIZE/2};
+                let cx=0,cy=0; this.cells.forEach(c=>{cx+=c.x;cy+=c.y;});
+                return {x:cx/this.cells.length, y:cy/this.cells.length};
+            }
+            get biggestMass() { return Math.max(...this.cells.map(c=>c.mass),0); }
+            updateAI(entities, spatialGrid) {
+                if (!this.isBot || this.cells.length===0) return;
+                this.aiTimer--;
+                if (this.aiTimer > 0) return;
+                this.aiTimer = 10 + Math.floor(Math.random()*6);
+                const now = Date.now();
+                const center = this.centroid;
+                const myBiggest = this.biggestMass;
+                let threatDirX = 0, threatDirY = 0, threatCount = 0;
+                let preyTarget = null, preyDist = Infinity;
+                let avoidVirusDirX = 0, avoidVirusDirY = 0, virusCount = 0;
+                entities.forEach(other => {
+                    if (other === this) return;
+                    other.cells.forEach(c => {
+                        const d = dist(center.x, center.y, c.x, c.y);
+                        if (d > 900) return;
+                        if (c.mass > myBiggest * 1.15 && d < 600) {
+                            const angle = Math.atan2(center.y - c.y, center.x - c.x);
+                            threatDirX += Math.cos(angle); threatDirY += Math.sin(angle);
+                            threatCount++;
+                        } else if (myBiggest > c.mass * 1.15 && d < 700 && d < preyDist) {
+                            preyTarget = c; preyDist = d;
+                        }
+                    });
+                });
+                const nearbyViruses = spatialGrid.getNearbyViruses(center.x, center.y, 400);
+                nearbyViruses.forEach(v => {
+                    const d = dist(center.x, center.y, v.x, v.y);
+                    if (d < 350 && myBiggest <= v.mass * 1.2) {
+                        const angle = Math.atan2(center.y - v.y, center.x - v.x);
+                        avoidVirusDirX += Math.cos(angle); avoidVirusDirY += Math.sin(angle);
+                        virusCount++;
+                    }
+                });
+                let moveX = center.x, moveY = center.y;
+                if (threatCount > 0) {
+                    moveX = center.x + (threatDirX / threatCount) * 350;
+                    moveY = center.y + (threatDirY / threatCount) * 350;
+                    if (Math.random() < 0.4) { ejectMass(this); this.lastEject = now; }
+                } else if (preyTarget && preyDist < 500) {
+                    moveX = preyTarget.x; moveY = preyTarget.y;
+                    if (this.cells.length < 8 && myBiggest > MIN_SPLIT_MASS*2 && preyTarget.mass < myBiggest*0.6 && preyDist > 120 && Math.random() < 0.5) {
+                        splitEntity(this); this.lastSplit = now;
+                    }
+                } else if (virusCount > 0) {
+                    moveX = center.x + (avoidVirusDirX / virusCount) * 180;
+                    moveY = center.y + (avoidVirusDirY / virusCount) * 180;
+                } else {
+                    const nearbyFoods = spatialGrid.getNearbyFoods(center.x, center.y, 600);
+                    let bestScore = -Infinity, bestFood = null;
+                    for (const f of nearbyFoods) {
+                        const d = dist(center.x, center.y, f.x, f.y);
+                        if (d < 2) continue;
+                        const score = f.mass / (d+1);
+                        if (score > bestScore) { bestScore = score; bestFood = f; }
+                    }
+                    if (bestFood) { moveX = bestFood.x; moveY = bestFood.y; }
+                    else {
+                        const margin = 800;
+                        moveX = Math.max(margin, Math.min(MAP_SIZE-margin, center.x + (Math.random()-0.5)*700));
+                        moveY = Math.max(margin, Math.min(MAP_SIZE-margin, center.y + (Math.random()-0.5)*700));
+                    }
+                }
+                this.targetX = moveX; this.targetY = moveY;
+            }
+        }
+
+        // === Funciones de juego ===
+        function splitEntity(entity) {
+            const cells = entity.cells.slice();
+            const newCells = [];
+            for (const cell of cells) {
+                if (entity.cells.length + newCells.length >= MAX_CELLS) break;
+                if (cell.mass >= MIN_SPLIT_MASS) {
+                    const halfMass = cell.mass / 2;
+                    cell.mass = halfMass;
+                    const nc = new Cell(cell.x, cell.y, halfMass, entity.color, entity);
+                    const angle = Math.atan2(entity.targetY - cell.y, entity.targetX - cell.x);
+                    nc.vx = Math.cos(angle)*32; nc.vy = Math.sin(angle)*32;
+                    nc.cooldown = 500; cell.cooldown = 500;
+                    newCells.push(nc);
+                }
+            }
+            entity.cells.push(...newCells);
+            entity.lastSplit = Date.now();
+        }
+        function ejectMass(entity) {
+            for (const cell of entity.cells) {
+                if (cell.mass > EJECT_COST+15) {
+                    cell.mass -= EJECT_COST;
+                    const angle = Math.atan2(entity.targetY - cell.y, entity.targetX - cell.x);
+                    ejectedMasses.push(new EjectedMass(cell.x+Math.cos(angle)*cell.radius, cell.y+Math.sin(angle)*cell.radius, angle, cell.color));
+                }
+            }
+            entity.lastEject = Date.now();
+        }
+        function popVirusOnCell(cell, virus) {
+            if (cell.owner.cells.length >= MAX_CELLS) return;
+            const pieces = Math.min(MAX_CELLS - cell.owner.cells.length, 10);
+            const totalMass = cell.mass + virus.mass;
+            const pieceMass = totalMass / (pieces + 1);
+            cell.mass = pieceMass;
+            cell.cooldown = 700;
+            for (let k = 0; k < pieces; k++) {
+                const nc = new Cell(cell.x, cell.y, pieceMass, cell.owner.color, cell.owner);
+                const angle = (Math.PI*2/pieces)*k;
+                nc.vx = Math.cos(angle)*15; nc.vy = Math.sin(angle)*15;
+                nc.cooldown = 700;
+                cell.owner.cells.push(nc);
+            }
+        }
+        function resolveCollisions(entity) {
+            for (let i=0; i<entity.cells.length; i++) {
+                for (let j=i+1; j<entity.cells.length; j++) {
+                    const a = entity.cells[i], b = entity.cells[j];
+                    const d = dist(a.x,a.y,b.x,b.y);
+                    const minDist = a.radius + b.radius;
+                    if (d < minDist) {
+                        if (a.cooldown<=0 && b.cooldown<=0) {
+                            if (d < Math.abs(a.radius-b.radius)+10) {
+                                if (a.mass>=b.mass) { a.mass+=b.mass; entity.cells.splice(j,1); j--; }
+                                else { b.mass+=a.mass; entity.cells.splice(i,1); i--; break; }
+                            } else {
+                                const angle = Math.atan2(b.y-a.y, b.x-a.x);
+                                a.x -= Math.cos(angle); a.y -= Math.sin(angle);
+                                b.x += Math.cos(angle); b.y += Math.sin(angle);
+                            }
+                        } else {
+                            const overlap = minDist - d;
+                            const angle = Math.atan2(b.y-a.y, b.x-a.x);
+                            a.x -= Math.cos(angle)*overlap/2; a.y -= Math.sin(angle)*overlap/2;
+                            b.x += Math.cos(angle)*overlap/2; b.y += Math.sin(angle)*overlap/2;
+                        }
+                    }
+                }
+            }
+        }
+
+        // === Estado global ===
+        let spatialGrid = new SpatialGrid();
+        let foods = [], superFoods = [], viruses = [], ejectedMasses = [];
+        let playerEntity = new Entity(MAP_SIZE/2, MAP_SIZE/2, 20, "Tú", false);
+        let bots = [];
+        let playing = true, camX=MAP_SIZE/2, camY=MAP_SIZE/2, zoom=1, prevMass=20;
+
+        function initGameObjects() {
+            foods = Array.from({length: FOOD_COUNT}, () => new Food());
+            superFoods = Array.from({length: SUPER_FOOD_COUNT}, () => new SuperFood());
+            foods.forEach(f => spatialGrid.addFood(f));
+            superFoods.forEach(sf => spatialGrid.addSuperFood(sf));
+            viruses = Array.from({length: VIRUS_COUNT}, () => new Virus(spatialGrid));
+            ejectedMasses = [];
+            bots = Array.from({length: BOT_COUNT}, (_,i) => new Entity(Math.random()*MAP_SIZE, Math.random()*MAP_SIZE, 20+Math.random()*40, `Bot ${i+1}`, true));
+            playerEntity = new Entity(MAP_SIZE/2, MAP_SIZE/2, 20, "Tú", false);
+            playing = true; prevMass = 20;
+        }
+        function restartGame() {
+            spatialGrid = new SpatialGrid();
+            initGameObjects();
+            document.getElementById('mass-value').textContent = '20';
+            document.getElementById('mass-value').classList.remove('growing','shrinking');
+            document.getElementById('death-overlay').classList.remove('active');
+        }
+        initGameObjects();
+
+        function gameLoop() {
+            if (!playing) { requestAnimationFrame(gameLoop); return; }
+            const allEntities = [playerEntity, ...bots].filter(e => e.cells.length > 0);
+
+            // Cámara
+            if (playerEntity.cells.length > 0) {
+                const target = playerEntity.centroid;
+                camX += (target.x - camX)*0.08; camY += (target.y - camY)*0.08;
+                const cells = playerEntity.cells;
+                let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity;
+                cells.forEach(c=>{ minX=Math.min(minX,c.x-c.visualRadius); maxX=Math.max(maxX,c.x+c.visualRadius); minY=Math.min(minY,c.y-c.visualRadius); maxY=Math.max(maxY,c.y+c.visualRadius); });
+                const spread = Math.max(maxX-minX, maxY-minY, 400);
+                let tZoom = Math.min(0.9, Math.min(width,height)/(spread*1.8));
+                tZoom = Math.max(0.15, tZoom);
+                zoom += (tZoom - zoom)*0.05;
+            }
+
+            // Input: priorizar joystick si está activo, sino ratón o toque directo
+            if (isTouchDevice && joystickActive) {
+                const dx = joystickStickX - joystickBaseX;
+                const dy = joystickStickY - joystickBaseY;
+                const dist2 = Math.hypot(dx, dy);
+                if (dist2 > 5) {
+                    const normX = dx / dist2;
+                    const normY = dy / dist2;
+                    const center = playerEntity.centroid;
+                    playerEntity.targetX = center.x + normX * 200;
+                    playerEntity.targetY = center.y + normY * 200;
+                }
+            } else if (mouseOnCanvas) {
+                playerEntity.targetX = (mouseX - width/2) / zoom + camX;
+                playerEntity.targetY = (mouseY - height/2) / zoom + camY;
+            } else if (!isTouchDevice) {
+                // Sin input, mantener última posición
+            }
+
+            bots.forEach(b => b.updateAI(allEntities, spatialGrid));
+            allEntities.forEach(e => { e.cells.forEach(c => c.update(e.targetX, e.targetY)); resolveCollisions(e); });
+            ejectedMasses.forEach(m => m.update());
+            ejectedMasses = ejectedMasses.filter(m => m.alive);
+
+            // Colisiones con comida
+            allEntities.forEach(ent => {
+                for (let i = ent.cells.length-1; i>=0; i--) {
+                    const cell = ent.cells[i];
+                    const nearbyFoods = spatialGrid.getNearbyFoods(cell.x, cell.y, cell.radius+20);
+                    for (let j = nearbyFoods.length-1; j>=0; j--) {
+                        const f = nearbyFoods[j];
+                        if (f.mass === undefined) continue;
+                        if (dist(cell.x, cell.y, f.x, f.y) < cell.radius) {
+                            cell.mass += f.mass;
+                            if (f.radius === getRadius(3)) {
+                                spatialGrid.removeFood(f);
+                                const newFood = new Food(); newFood.gridIdx = spatialGrid.getCellIndex(newFood.x, newFood.y); spatialGrid.addFood(newFood);
+                                const idx = foods.indexOf(f); if (idx>=0) foods[idx] = newFood;
+                            } else {
+                                spatialGrid.removeSuperFood(f);
+                                const newSF = new SuperFood(); newSF.gridIdx = spatialGrid.getCellIndex(newSF.x, newSF.y); spatialGrid.addSuperFood(newSF);
+                                const idx = superFoods.indexOf(f); if (idx>=0) superFoods[idx] = newSF;
+                            }
+                        }
+                    }
+                }
+            });
+
+            // Masas eyectadas alimentan virus
+            for (let i = ejectedMasses.length-1; i>=0; i--) {
+                const em = ejectedMasses[i];
+                const nearbyViruses = spatialGrid.getNearbyViruses(em.x, em.y, em.radius+20);
+                let collided = false;
+                for (const v of nearbyViruses) {
+                    if (dist(em.x, em.y, v.x, v.y) < v.radius + em.radius) {
+                        v.mass += em.mass; v.updateRadius(); collided = true;
+                        if (v.mass >= VIRUS_EXPLODE_THRESHOLD) {
+                            allEntities.forEach(ent => {
+                                for (let ci = ent.cells.length-1; ci>=0; ci--) {
+                                    const cell = ent.cells[ci];
+                                    if (cell.mass > VIRUS_BASE_MASS*1.15 && dist(cell.x, cell.y, v.x, v.y) < v.radius + cell.radius + 50) {
+                                        popVirusOnCell(cell, v);
+                                    }
+                                }
+                            });
+                            v.mass = VIRUS_BASE_MASS; v.updateRadius();
+                        }
+                        break;
+                    }
+                }
+                if (collided) ejectedMasses.splice(i,1);
+            }
+
+            // Células comen masas eyectadas
+            allEntities.forEach(ent => {
+                for (let i = ent.cells.length-1; i>=0; i--) {
+                    const cell = ent.cells[i];
+                    for (let j = ejectedMasses.length-1; j>=0; j--) {
+                        const m = ejectedMasses[j];
+                        if (cell.mass > m.mass*1.15 && dist(cell.x, cell.y, m.x, m.y) < cell.radius) {
+                            cell.mass += m.mass; ejectedMasses.splice(j,1);
+                        }
+                    }
+                }
+            });
+
+            // Células comen virus
+            allEntities.forEach(ent => {
+                for (let i = ent.cells.length-1; i>=0; i--) {
+                    const cell = ent.cells[i];
+                    const nearbyViruses = spatialGrid.getNearbyViruses(cell.x, cell.y, cell.radius+30);
+                    for (const v of nearbyViruses) {
+                        if (cell.mass > v.mass*1.15 && dist(cell.x, cell.y, v.x, v.y) < cell.radius) {
+                            spatialGrid.removeVirus(v);
+                            const idx = viruses.indexOf(v);
+                            if (idx >= 0) { viruses.splice(idx,1); viruses.push(new Virus(spatialGrid)); }
+                            if (ent.cells.length < MAX_CELLS) popVirusOnCell(cell, v);
+                            else cell.mass += v.mass;
+                            break;
+                        }
+                    }
+                }
+            });
+
+            // Colisiones entre entidades
+            for (let a=0; a<allEntities.length; a++) {
+                const entA = allEntities[a];
+                for (let b=a+1; b<allEntities.length; b++) {
+                    const entB = allEntities[b];
+                    for (let ia=entA.cells.length-1; ia>=0; ia--) {
+                        const ca = entA.cells[ia];
+                        for (let ib=entB.cells.length-1; ib>=0; ib--) {
+                            const cb = entB.cells[ib];
+                            const d = dist(ca.x, ca.y, cb.x, cb.y);
+                            if (ca.mass > cb.mass*1.15 && d < ca.radius - cb.radius/3) {
+                                ca.mass += cb.mass; entB.cells.splice(ib,1);
+                                if (entB.cells.length===0) handleEntityDeath(entB);
+                                break;
+                            } else if (cb.mass > ca.mass*1.15 && d < cb.radius - ca.radius/3) {
+                                cb.mass += ca.mass; entA.cells.splice(ia,1);
+                                if (entA.cells.length===0) handleEntityDeath(entA);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            function handleEntityDeath(entity) {
+                if (entity.isBot) {
+                    const idx = bots.indexOf(entity); if (idx>=0) bots.splice(idx,1);
+                    setTimeout(() => { if (playing) bots.push(new Entity(Math.random()*MAP_SIZE, Math.random()*MAP_SIZE, 20, entity.name, true)); }, 3000);
+                } else {
+                    document.getElementById('final-mass').textContent = Math.floor(entity.totalMass);
+                    document.getElementById('death-overlay').classList.add('active');
+                    playing = false;
+                }
+            }
+
+            while (bots.length < BOT_COUNT && playing) {
+                bots.push(new Entity(Math.random()*MAP_SIZE, Math.random()*MAP_SIZE, 20, `Bot ${Math.floor(Math.random()*100)}`, true));
+            }
+
+            // UI masa
+            const currentMass = Math.floor(playerEntity.totalMass);
+            const massEl = document.getElementById('mass-value');
+            massEl.textContent = currentMass;
+            massEl.classList.remove('growing','shrinking');
+            if (currentMass > prevMass+2) massEl.classList.add('growing');
+            if (currentMass < prevMass-2) massEl.classList.add('shrinking');
+            prevMass = currentMass;
+
+            // === RENDER ===
+            ctx.fillStyle = '#0a0a10'; ctx.fillRect(0,0,width,height);
+            ctx.save();
+            ctx.translate(width/2, height/2); ctx.scale(zoom, zoom); ctx.translate(-camX, -camY);
+
+            const viewLeft = camX - (width/2)/zoom, viewRight = camX + (width/2)/zoom;
+            const viewTop = camY - (height/2)/zoom, viewBottom = camY + (height/2)/zoom;
+            const margin = 200;
+            const cullLeft = viewLeft - margin, cullRight = viewRight + margin;
+            const cullTop = viewTop - margin, cullBottom = viewBottom + margin;
+            function isVisible(x,y,r) { return x+r >= cullLeft && x-r <= cullRight && y+r >= cullTop && y-r <= cullBottom; }
+
+            // Grid
+            ctx.strokeStyle = '#1a1a24'; ctx.lineWidth = 1;
+            const startX = Math.floor(cullLeft/60)*60, startY = Math.floor(cullTop/60)*60;
+            const endX = cullRight, endY = cullBottom;
+            ctx.beginPath();
+            for (let x=startX; x<=endX; x+=60) { ctx.moveTo(x,startY); ctx.lineTo(x,endY); }
+            for (let y=startY; y<=endY; y+=60) { ctx.moveTo(startX,y); ctx.lineTo(endX,y); }
+            ctx.stroke();
+            ctx.strokeStyle = '#f33'; ctx.lineWidth = 8;
+            ctx.strokeRect(0,0,MAP_SIZE,MAP_SIZE);
+
+            // Comida
+            foods.forEach(f => { if(isVisible(f.x,f.y,f.radius)) { ctx.fillStyle=f.color; ctx.beginPath(); ctx.arc(f.x,f.y,f.radius,0,Math.PI*2); ctx.fill(); } });
+            superFoods.forEach(sf => {
+                if(isVisible(sf.x,sf.y,sf.radius*1.2)) {
+                    const pulse = 1 + Math.sin(Date.now()*0.01+sf.pulse)*0.2;
+                    ctx.fillStyle = sf.color; ctx.beginPath(); ctx.arc(sf.x,sf.y,sf.radius*pulse,0,Math.PI*2); ctx.fill();
+                    ctx.fillStyle = 'rgba(255,255,255,0.2)'; ctx.beginPath(); ctx.arc(sf.x,sf.y,sf.radius*pulse*0.7,0,Math.PI*2); ctx.fill();
+                }
+            });
+
+            // Virus
+            viruses.forEach(v => {
+                if(isVisible(v.x,v.y,v.radius+10)) {
+                    ctx.fillStyle = '#3a3'; ctx.strokeStyle = '#060'; ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    for (let i=0;i<20;i++) {
+                        const angle = v.angle + (Math.PI/10)*i;
+                        const r = i%2===0 ? v.radius+4 : v.radius-3;
+                        const x = v.x+Math.cos(angle)*r, y = v.y+Math.sin(angle)*r;
+                        if (i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+                    }
+                    ctx.closePath(); ctx.fill(); ctx.stroke();
+                }
+            });
+
+            // Masas eyectadas
+            ejectedMasses.forEach(m => { if(isVisible(m.x,m.y,m.radius)) { ctx.fillStyle=m.color; ctx.beginPath(); ctx.arc(m.x,m.y,m.radius,0,Math.PI*2); ctx.fill(); } });
+
+            // Células
+            const allCells = [];
+            allEntities.forEach(ent => ent.cells.forEach(c => allCells.push({cell:c, name:ent.name})));
+            allCells.sort((a,b) => a.cell.mass - b.cell.mass);
+            allCells.forEach(({cell, name}) => {
+                if(!isVisible(cell.x, cell.y, cell.visualRadius)) return;
+                const r = cell.visualRadius;
+                ctx.fillStyle = 'rgba(0,0,0,0.2)'; ctx.beginPath(); ctx.arc(cell.x+2, cell.y+2, r, 0, Math.PI*2); ctx.fill();
+                ctx.fillStyle = cell.color; ctx.beginPath(); ctx.arc(cell.x, cell.y, r, 0, Math.PI*2); ctx.fill();
+                ctx.strokeStyle = 'rgba(0,0,0,0.4)'; ctx.lineWidth = Math.max(2, r*0.08); ctx.stroke();
+                ctx.fillStyle = 'rgba(255,255,255,0.25)'; ctx.beginPath(); ctx.arc(cell.x - r*0.25, cell.y - r*0.25, r*0.2, 0, Math.PI*2); ctx.fill();
+                if (r > 15) {
+                    ctx.fillStyle = '#fff'; ctx.font = `bold ${Math.max(10, r/3)}px sans-serif`; ctx.textAlign='center'; ctx.textBaseline='middle';
+                    ctx.fillText(name, cell.x, cell.y);
+                }
+            });
+
+            ctx.restore();
+
+            // === DIBUJAR JOYSTICK (si es táctil) ===
+            if (isTouchDevice && joystickActive) {
+                // Base
+                ctx.fillStyle = 'rgba(255,255,255,0.15)';
+                ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.arc(joystickBaseX, joystickBaseY, joystickBaseRadius, 0, Math.PI*2);
+                ctx.fill();
+                ctx.stroke();
+                // Stick
+                ctx.fillStyle = 'rgba(255,255,255,0.35)';
+                ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(joystickStickX, joystickStickY, joystickRadius, 0, Math.PI*2);
+                ctx.fill();
+                ctx.stroke();
+            } else if (isTouchDevice) {
+                // Dibujar el área del joystick inactivo (sutil)
+                const jx = width * 0.2, jy = height * 0.75;
+                ctx.fillStyle = 'rgba(255,255,255,0.05)';
+                ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(jx, jy, joystickBaseRadius, 0, Math.PI*2);
+                ctx.fill();
+                ctx.stroke();
+            }
+
+            // Leaderboard
+            const sorted = [playerEntity, ...bots].filter(e => e.cells.length>0).sort((a,b)=>b.totalMass-a.totalMass).slice(0,5);
+            const list = document.getElementById('lb-list'); list.innerHTML = '';
+            sorted.forEach(e => {
+                const li = document.createElement('li');
+                li.innerHTML = `<span class="dot" style="background:${e.color};"></span> ${e.name} (${Math.floor(e.totalMass)})`;
+                list.appendChild(li);
+            });
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        requestAnimationFrame(gameLoop);
+    </script>
+</body>
+</html>
