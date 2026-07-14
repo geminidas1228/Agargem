@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, shrink-to-fit=yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>Agar.io Mobile</title>
+    <style>
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body {
+            background:#0b0b0f; overflow:hidden; font-family:'Segoe UI',sans-serif;
+            user-select:none; -webkit-user-select:none; -webkit-touch-callout:none;
+            touch-action:manipulation; position:fixed; width:100%; height:100%;
+        }
+        canvas { display:block; position:absolute; top:0; left:0; touch-action:none; }
+
+        #mass-panel {
+            position:absolute; top:12px; left:12px; background:rgba(0,0,0,0.7);
+            padding:8px 14px; border-radius:10px; border:1px solid rgba(255,255,255,0.15);
+            z-index:10; pointer-events:none;
+        }
+        #mass-panel .label { font-size:9px; color:#aaa; letter-spacing:0.05em; }
+        #mass-panel .value { font-size:28px; font-weight:800; line-height:1.1; }
+
+        #leaderboard {
+            position:absolute; top:12px; right:12px; background:rgba(0,0,0,0.7);
+            padding:10px; border-radius:10px; width:150px; border:1px solid rgba(255,255,255,0.15);
+            z-index:10; pointer-events:none;
+        }
+        #leaderboard h2 { font-size:11px; text-align:center; border-bottom:1px solid #444; padding-bottom:4px; margin-bottom:4px; }
+        #lb-list { list-style:none; font-size:10px; line-height:1.6; }
+        #lb-list li { display:flex; align-items:center; gap:4px; }
+        .dot { width:6px; height:6px; border-radius:50%; }
+
+        .touch-btn {
+            position:absolute; z-index:20; pointer-events:all;
+            background:rgba(255,255,255,0.2); border:2px solid rgba(255,255,255,0.5);
+            border-radius:50%; color:#fff; font-weight:bold; font-size:16px;
+            display:flex; align-items:center; justify-content:center;
+            -webkit-tap-highlight-color:transparent; touch-action:manipulation;
+            transition:background 0.1s; text-align:center; line-height:1.2;
+        }
+        .touch-btn:active { background:rgba(255,255,255,0.45); }
+        #split-btn { bottom:110px; right:20px; width:70px; height:70px; }
+        #eject-btn { bottom:25px; right:20px; width:70px; height:70px; }
+
+        #death-overlay {
+            position:absolute; top:0; left:0; width:100%; height:100%;
+            background:rgba(0,0,0,0.85); display:flex; flex-direction:column;
+            align-items:center; justify-content:center; z-index:100;
+            opacity:0; transition:opacity 0.5s; pointer-events:none;
+        }
+        #death-overlay.active { opacity:1; pointer-events:all; }
+        #death-overlay h1 { font-size:36px; color:#f44; }
+        #death-overlay button {
+            margin-top:12px; padding:12px 28px; font-size:16px; font-weight:bold;
+            border:none; border-radius:20px; background:#fff; color:#000; cursor:pointer;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="mass-panel"><div class="label">MASA</div><div class="value" id="mass-value">20</div></div>
+    <div id="leaderboard"><h2>🏆 TOP</h2><ul id="lb-list"></ul></div>
+    <div class="touch-btn" id="split-btn">⚡</div>
+    <div class="touch-btn" id="eject-btn">💨</div>
+    <div id="death-overlay">
+        <h1>💀 Eliminado</h1>
+        <p style="font-size:18px;color:#ccc;">Masa: <span id="final-mass">0</span></p>
+        <button id="restart-btn">🔄 Reiniciar</button>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+<script>
+(function(){
+const canvas=document.getElementById('gameCanvas'),ctx=canvas.getContext('2d');
+let W=window.innerWidth,H=window.innerHeight;
+canvas.width=W; canvas.height=H;
+window.addEventListener('resize',()=>{W=window.innerWidth;H=window.innerHeight;canvas.width=W;canvas.height=H;});
+
+const MAP=8000,GRID=300,FOOD_N=1500,SUPER_N=60,VIRUS_N=40,BOT_N=20;
+const MAX_C=16,MIN_SPLIT=35,EJECT_COST=18,EJECT_MASS=14,VBASE=110,VEXPLODE=VBASE*1.5;
+
+// Input táctil simple: tocar = mover hacia ese punto
+let tx=W/2,ty=H/2, touching=false;
+canvas.addEventListener('touchstart',e=>{
+    e.preventDefault();
+    const t=e.touches[0];
+    if(t.clientX>W*0.75&&t.clientY>H*0.65) return; // ignorar zona de botones
+    tx=t.clientX; ty=t.clientY; touching=true;
+},{passive:false});
+canvas.addEventListener('touchmove',e=>{
+    e.preventDefault();
+    const t=e.touches[0];
+    if(t.clientX>W*0.75&&t.clientY>H*0.65) return;
+    tx=t.clientX; ty=t.clientY; touching=true;
+},{passive:false});
+canvas.addEventListener('touchend',()=>{touching=false;});
+canvas.addEventListener('mousemove',e=>{tx=e.clientX;ty=e.clientY;touching=true;});
+canvas.addEventListener('mouseleave',()=>{touching=false;});
+canvas.addEventListener('mouseenter',e=>{tx=e.clientX;ty=e.clientY;touching=true;});
+
+// Botones
+document.getElementById('split-btn').addEventListener('touchstart',e=>{e.preventDefault();e.stopPropagation();if(p&&p.cells.length)splitE(p);});
+document.getElementById('eject-btn').addEventListener('touchstart',e=>{e.preventDefault();e.stopPropagation();if(p&&p.cells.length)ejectM(p);});
+document.getElementById('split-btn').addEventListener('mousedown',e=>{e.preventDefault();if(p&&p.cells.length)splitE(p);});
+document.getElementById('eject-btn').addEventListener('mousedown',e=>{e.preventDefault();if(p&&p.cells.length)ejectM(p);});
+document.getElementById('restart-btn').addEventListener('click',()=>{document.getElementById('death-overlay').classList.remove('active');restart();});
+window.addEventListener('keydown',e=>{if(e.code==='Space'){e.preventDefault();if(p&&p.cells.length)splitE(p);}if(e.key==='w'||e.key==='W'){if(p&&p.cells.length)ejectM(p);}});
+
+function r(m){return Math.sqrt(m*100/Math.PI);}
+function rc(){return `hsl(${Math.random()*360},60%,50%)`;}
+function d(x1,y1,x2,y2){return Math.hypot(x2-x1,y2-y1);}
+
+class Grid{
+    constructor(){this.c=Math.ceil(MAP/GRID);this.r=Math.ceil(MAP/GRID);this.f=Array.from({length:this.c*this.r},()=>[]);this.s=Array.from({length:this.c*this.r},()=>[]);this.v=Array.from({length:this.c*this.r},()=>[]);}
+    i(x,y){return Math.min(Math.floor(y/GRID)*this.c+Math.floor(x/GRID),this.f.length-1);}
+    af(f){this.f[this.i(f.x,f.y)].push(f);}
+    rf(f,i=null){i=i||this.i(f.x,f.y);const a=this.f[i];const j=a.indexOf(f);if(j>=0)a.splice(j,1);}
+    as(s){this.s[this.i(s.x,s.y)].push(s);}
+    rs(s,i=null){i=i||this.i(s.x,s.y);const a=this.s[i];const j=a.indexOf(s);if(j>=0)a.splice(j,1);}
+    av(v){this.v[this.i(v.x,v.y)].push(v);}
+    rv(v){const i=this.i(v.x,v.y);const a=this.v[i];const j=a.indexOf(v);if(j>=0)a.splice(j,1);}
+    nf(x,y,rad){
+        const R=[];const mnC=Math.floor((x-rad)/GRID),mxC=Math.floor((x+rad)/GRID),mnR=Math.floor((y-rad)/GRID),mxR=Math.floor((y+rad)/GRID);
+        for(let r=mnR;r<=mxR;r++)for(let c=mnC;c<=mxC;c++){if(r<0||r>=this.r||c<0||c>=this.c)continue;const idx=r*this.c+c;R.push(...this.f[idx]);R.push(...this.s[idx]);}
+        return R;
+    }
+    nv(x,y,rad){
+        const R=[];const mnC=Math.floor((x-rad)/GRID),mxC=Math.floor((x+rad)/GRID),mnR=Math.floor((y-rad)/GRID),mxR=Math.floor((y+rad)/GRID);
+        for(let r=mnR;r<=mxR;r++)for(let c=mnC;c<=mxC;c++){if(r<0||r>=this.r||c<0||c>=this.c)continue;const idx=r*this.c+c;R.push(...this.v[idx]);}
+        return R;
+    }
+}
+
+class Food{constructor(){this.x=Math.random()*MAP;this.y=Math.random()*MAP;this.m=3;this.rad=r(3);this.col=rc();}}
+class SuperFood{constructor(){this.x=Math.random()*MAP;this.y=Math.random()*MAP;this.m=14;this.rad=r(14);this.col=rc();this.p=Math.random()*Math.PI*2;}}
+class Virus{constructor(g){this.x=Math.random()*MAP;this.y=Math.random()*MAP;this.m=VBASE;this.rad=r(this.m);this.a=Math.random()*Math.PI*2;if(g)g.av(this);}
+ur(){this.rad=r(this.m);}}
+class Ejected{constructor(x,y,a,col){this.x=x;this.y=y;this.m=EJECT_MASS;this.rad=r(EJECT_MASS);this.col=col;this.vx=Math.cos(a)*18;this.vy=Math.sin(a)*18;this.l=300;}
+up(){this.vx*=0.92;this.vy*=0.92;this.x+=this.vx;this.y+=this.vy;this.x=Math.max(0,Math.min(MAP,this.x));this.y=Math.max(0,Math.min(MAP,this.y));this.l--;}
+get al(){return this.l>0;}}
+class Cell{
+    constructor(x,y,m,col,o){this.x=x;this.y=y;this.m=m;this.col=col;this.o=o;this.vx=0;this.vy=0;this.cd=0;this.vr=r(m);}
+    get rad(){return r(this.m);}
+    up(tx,ty){
+        this.vr+=(this.rad-this.vr)*0.15;const dx=tx-this.x,dy=ty-this.y;const dd=Math.hypot(dx,dy);
+        if(dd>1){const s=Math.max(2.5,11-this.rad/40);this.x+=(dx/dd)*s;this.y+=(dy/dd)*s;}
+        this.vx*=0.85;this.vy*=0.85;this.x+=this.vx;this.y+=this.vy;
+        this.x=Math.max(this.rad,Math.min(MAP-this.rad,this.x));this.y=Math.max(this.rad,Math.min(MAP-this.rad,this.y));
+        if(this.cd>0)this.cd--;
+    }
+}
+class Entity{
+    constructor(x,y,m,name,bot=!1){this.name=name;this.col=rc();this.bot=bot;this.cells=[new Cell(x,y,m,this.col,this)];this.tx=x;this.ty=y;this.aiT=0;this.lS=0;this.lE=0;}
+    get tm(){return this.cells.reduce((s,c)=>s+c.m,0);}
+    get ct(){if(!this.cells.length)return{x:MAP/2,y:MAP/2};let cx=0,cy=0;this.cells.forEach(c=>{cx+=c.x;cy+=c.y;});return{x:cx/this.cells.length,y:cy/this.cells.length};}
+    get bm(){return Math.max(...this.cells.map(c=>c.m),0);}
+    ai(es,g){
+        if(!this.bot||!this.cells.length)return;this.aiT--;if(this.aiT>0)return;this.aiT=12+Math.floor(Math.random()*8);
+        const ct=this.ct,mb=this.bm;let tdx=0,tdy=0,tc=0,pr=null,pd=Infinity,vdx=0,vdy=0,vc=0;
+        es.forEach(o=>{if(o===this)return;o.cells.forEach(c=>{const dd=d(ct.x,ct.y,c.x,c.y);if(dd>900)return;if(c.m>mb*1.15&&dd<600){const a=Math.atan2(ct.y-c.y,ct.x-c.x);tdx+=Math.cos(a);tdy+=Math.sin(a);tc++;}else if(mb>c.m*1.15&&dd<700&&dd<pd){pr=c;pd=dd;}});});
+        g.nv(ct.x,ct.y,400).forEach(v=>{const dd=d(ct.x,ct.y,v.x,v.y);if(dd<350&&mb<=v.m*1.2){const a=Math.atan2(ct.y-v.y,ct.x-v.x);vdx+=Math.cos(a);vdy+=Math.sin(a);vc++;}});
+        let mx=ct.x,my=ct.y;
+        if(tc>0){mx=ct.x+(tdx/tc)*350;my=ct.y+(tdy/tc)*350;if(Math.random()<0.3){ejectM(this);this.lE=Date.now();}}
+        else if(pr&&pd<500){mx=pr.x;my=pr.y;if(this.cells.length<8&&mb>MIN_SPLIT*2&&pr.m<mb*0.6&&pd>120&&Math.random()<0.45){splitE(this);this.lS=Date.now();}}
+        else if(vc>0){mx=ct.x+(vdx/vc)*180;my=ct.y+(vdy/vc)*180;}
+        else{const nf=g.nf(ct.x,ct.y,600);let bs=-Infinity,bf=null;nf.forEach(f=>{const dd=d(ct.x,ct.y,f.x,f.y);if(dd<2)return;const sc=f.m/(dd+1);if(sc>bs){bs=sc;bf=f;}});
+        if(bf){mx=bf.x;my=bf.y;}else{const mg=700;mx=Math.max(mg,Math.min(MAP-mg,ct.x+(Math.random()-0.5)*600));my=Math.max(mg,Math.min(MAP-mg,ct.y+(Math.random()-0.5)*600));}}
+        this.tx=mx;this.ty=my;
+    }
+}
+
+function splitE(e){const cs=e.cells.slice(),nc=[];for(const c of cs){if(e.cells.length+nc.length>=MAX_C)break;if(c.m>=MIN_SPLIT){const h=c.m/2;c.m=h;const n=new Cell(c.x,c.y,h,e.col,e);const a=Math.atan2(e.ty-c.y,e.tx-c.x);n.vx=Math.cos(a)*32;n.vy=Math.sin(a)*32;n.cd=500;c.cd=500;nc.push(n);}}e.cells.push(...nc);e.lS=Date.now();}
+function ejectM(e){for(const c of e.cells){if(c.m>EJECT_COST+15){c.m-=EJECT_COST;const a=Math.atan2(e.ty-c.y,e.tx-c.x);ej.push(new Ejected(c.x+Math.cos(a)*c.rad,c.y+Math.sin(a)*c.rad,a,c.col));}}e.lE=Date.now();}
+function popV(c,v){if(c.o.cells.length>=MAX_C)return;const pc=Math.min(MAX_C-c.o.cells.length,10),tm=c.m+v.m,pm=tm/(pc+1);c.m=pm;c.cd=700;for(let k=0;k<pc;k++){const nc=new Cell(c.x,c.y,pm,c.o.col,c.o);const a=(Math.PI*2/pc)*k;nc.vx=Math.cos(a)*15;nc.vy=Math.sin(a)*15;nc.cd=700;c.o.cells.push(nc);}}
+function resCol(e){for(let i=0;i<e.cells.length;i++){for(let j=i+1;j<e.cells.length;j++){const a=e.cells[i],b=e.cells[j];const dd=d(a.x,a.y,b.x,b.y),md=a.rad+b.rad;if(dd<md){if(a.cd<=0&&b.cd<=0){if(dd<Math.abs(a.rad-b.rad)+10){if(a.m>=b.m){a.m+=b.m;e.cells.splice(j,1);j--;}else{b.m+=a.m;e.cells.splice(i,1);i--;break;}}else{const an=Math.atan2(b.y-a.y,b.x-a.x);a.x-=Math.cos(an);a.y-=Math.sin(an);b.x+=Math.cos(an);b.y+=Math.sin(an);}}else{const ov=md-dd,an=Math.atan2(b.y-a.y,b.x-a.x);a.x-=Math.cos(an)*ov/2;a.y-=Math.sin(an)*ov/2;b.x+=Math.cos(an)*ov/2;b.y+=Math.sin(an)*ov/2;}}}}}
+
+let g=new Grid(),fs=[],ss=[],vs=[],ej=[],p=new Entity(MAP/2,MAP/2,20,'Tú'),bs=[],playing=!0,cx=MAP/2,cy=MAP/2,zm=1,pm=20;
+
+function init(){
+    g=new Grid();fs=Array.from({length:FOOD_N},()=>new Food());ss=Array.from({length:SUPER_N},()=>new SuperFood());
+    fs.forEach(f=>g.af(f));ss.forEach(s=>g.as(s));vs=Array.from({length:VIRUS_N},()=>new Virus(g));ej=[];
+    bs=Array.from({length:BOT_N},(_,i)=>new Entity(Math.random()*MAP,Math.random()*MAP,20+Math.random()*40,`Bot${i+1}`,!0));
+    p=new Entity(MAP/2,MAP/2,20,'Tú');playing=!0;pm=20;
+    document.getElementById('mass-value').textContent='20';
+}
+function restart(){init();document.getElementById('death-overlay').classList.remove('active');}
+init();
+
+function loop(){
+    if(!playing){requestAnimationFrame(loop);return;}
+    const ae=[p,...bs].filter(e=>e.cells.length>0);
+    if(p.cells.length>0){
+        const t=p.ct;cx+=(t.x-cx)*0.08;cy+=(t.y-cy)*0.08;
+        const cs=p.cells;let mnX=1/0,mxX=-1/0,mnY=1/0,mxY=-1/0;
+        cs.forEach(c=>{mnX=Math.min(mnX,c.x-c.vr);mxX=Math.max(mxX,c.x+c.vr);mnY=Math.min(mnY,c.y-c.vr);mxY=Math.max(mxY,c.y+c.vr);});
+        const sp=Math.max(mxX-mnX,mxY-mnY,400);let tz=Math.min(0.9,Math.min(W,H)/(sp*1.8));tz=Math.max(0.15,tz);zm+=(tz-zm)*0.05;
+    }
+    if(touching){p.tx=(tx-W/2)/zm+cx;p.ty=(ty-H/2)/zm+cy;}
+    bs.forEach(b=>b.ai(ae,g));
+    ae.forEach(e=>{e.cells.forEach(c=>c.up(e.tx,e.ty));resCol(e);});
+    ej.forEach(m=>m.up());ej=ej.filter(m=>m.al);
+
+    // Colisiones comida
+    ae.forEach(e=>{for(let i=e.cells.length-1;i>=0;i--){const c=e.cells[i];const nf=g.nf(c.x,c.y,c.rad+20);for(let j=nf.length-1;j>=0;j--){const f=nf[j];if(f.m===undefined)continue;if(d(c.x,c.y,f.x,f.y)<c.rad){c.m+=f.m;if(f.rad===r(3)){g.rf(f);const nf2=new Food();nf2.gi=g.i(nf2.x,nf2.y);g.af(nf2);const idx=fs.indexOf(f);if(idx>=0)fs[idx]=nf2;}else{g.rs(f);const ns=new SuperFood();ns.gi=g.i(ns.x,ns.y);g.as(ns);const idx=ss.indexOf(f);if(idx>=0)ss[idx]=ns;}}}}});
+
+    // Masas eyectadas alimentan virus
+    for(let i=ej.length-1;i>=0;i--){const em=ej[i];const nv=g.nv(em.x,em.y,em.rad+20);let col=!1;for(const v of nv){if(d(em.x,em.y,v.x,v.y)<v.rad+em.rad){v.m+=em.m;v.ur();col=!0;if(v.m>=VEXPLODE){ae.forEach(e=>{for(let ci=e.cells.length-1;ci>=0;ci--){const c=e.cells[ci];if(c.m>VBASE*1.15&&d(c.x,c.y,v.x,v.y)<v.rad+c.rad+50)popV(c,v);}});v.m=VBASE;v.ur();}break;}}if(col)ej.splice(i,1);}
+
+    // Células comen masas eyectadas
+    ae.forEach(e=>{for(let i=e.cells.length-1;i>=0;i--){const c=e.cells[i];for(let j=ej.length-1;j>=0;j--){const m=ej[j];if(c.m>m.m*1.15&&d(c.x,c.y,m.x,m.y)<c.rad){c.m+=m.m;ej.splice(j,1);}}}});
+
+    // Células comen virus
+    ae.forEach(e=>{for(let i=e.cells.length-1;i>=0;i--){const c=e.cells[i];const nv=g.nv(c.x,c.y,c.rad+30);for(const v of nv){if(c.m>v.m*1.15&&d(c.x,c.y,v.x,v.y)<c.rad){g.rv(v);const idx=vs.indexOf(v);if(idx>=0){vs.splice(idx,1);vs.push(new Virus(g));}if(e.cells.length<MAX_C)popV(c,v);else c.m+=v.m;break;}}}});
+
+    // Colisiones entre entidades
+    for(let a=0;a<ae.length;a++){const eA=ae[a];for(let b=a+1;b<ae.length;b++){const eB=ae[b];for(let ia=eA.cells.length-1;ia>=0;ia--){const ca=eA.cells[ia];for(let ib=eB.cells.length-1;ib>=0;ib--){const cb=eB.cells[ib];const dd=d(ca.x,ca.y,cb.x,cb.y);if(ca.m>cb.m*1.15&&dd<ca.rad-cb.rad/3){ca.m+=cb.m;eB.cells.splice(ib,1);if(!eB.cells.length)hd(eB);break;}else if(cb.m>ca.m*1.15&&dd<cb.rad-ca.rad/3){cb.m+=ca.m;eA.cells.splice(ia,1);if(!eA.cells.length)hd(eA);break;}}}}}
+
+    function hd(e){if(e.bot){const i=bs.indexOf(e);if(i>=0)bs.splice(i,1);setTimeout(()=>{if(playing)bs.push(new Entity(Math.random()*MAP,Math.random()*MAP,20,e.name,!0));},3000);}else{document.getElementById('final-mass').textContent=Math.floor(e.tm);document.getElementById('death-overlay').classList.add('active');playing=!1;}}
+    while(bs.length<BOT_N&&playing){bs.push(new Entity(Math.random()*MAP,Math.random()*MAP,20,`Bot${Math.floor(Math.random()*100)}`,!0));}
+
+    const cm=Math.floor(p.tm),mel=document.getElementById('mass-value');mel.textContent=cm;if(cm>pm+2)mel.style.color='#5f6';else if(cm<pm-2)mel.style.color='#f55';else mel.style.color='#fff';pm=cm;
+
+    // Render
+    ctx.fillStyle='#0a0a10';ctx.fillRect(0,0,W,H);
+    ctx.save();ctx.translate(W/2,H/2);ctx.scale(zm,zm);ctx.translate(-cx,-cy);
+    const vl=cx-(W/2)/zm,vr2=cx+(W/2)/zm,vt=cy-(H/2)/zm,vb=cy+(H/2)/zm,mg=200;
+    const cl=vl-mg,cr=vr2+mg,ct2=vt-mg,cb=vb+mg;
+    function iv(x,y,r){return x+r>=cl&&x-r<=cr&&y+r>=ct2&&y-r<=cb;}
+
+    ctx.strokeStyle='#1a1a24';ctx.lineWidth=1;const sx=Math.floor(cl/60)*60,sy=Math.floor(ct2/60)*60;
+    ctx.beginPath();for(let x=sx;x<=cr;x+=60){ctx.moveTo(x,ct2);ctx.lineTo(x,cb);}for(let y=sy;y<=cb;y+=60){ctx.moveTo(cl,y);ctx.lineTo(cr,y);}ctx.stroke();
+    ctx.strokeStyle='#f33';ctx.lineWidth=8;ctx.strokeRect(0,0,MAP,MAP);
+
+    fs.forEach(f=>{if(iv(f.x,f.y,f.rad)){ctx.fillStyle=f.col;ctx.beginPath();ctx.arc(f.x,f.y,f.rad,0,Math.PI*2);ctx.fill();}});
+    ss.forEach(s=>{if(iv(s.x,s.y,s.rad*1.2)){const pu=1+Math.sin(Date.now()*0.01+s.p)*0.2;ctx.fillStyle=s.col;ctx.beginPath();ctx.arc(s.x,s.y,s.rad*pu,0,Math.PI*2);ctx.fill();}});
+    vs.forEach(v=>{if(iv(v.x,v.y,v.rad+10)){ctx.fillStyle='#3a3';ctx.strokeStyle='#060';ctx.lineWidth=2;ctx.beginPath();for(let i=0;i<20;i++){const a=v.a+(Math.PI/10)*i;const rr=i%2===0?v.rad+4:v.rad-3;const x=v.x+Math.cos(a)*rr,y=v.y+Math.sin(a)*rr;i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);}ctx.closePath();ctx.fill();ctx.stroke();}});
+    ej.forEach(m=>{if(iv(m.x,m.y,m.rad)){ctx.fillStyle=m.col;ctx.beginPath();ctx.arc(m.x,m.y,m.rad,0,Math.PI*2);ctx.fill();}});
+
+    const ac=[];ae.forEach(e=>e.cells.forEach(c=>ac.push({c,name:e.name})));ac.sort((a,b)=>a.c.m-b.c.m);
+    ac.forEach(({c,name})=>{if(!iv(c.x,c.y,c.vr))return;const rr=c.vr;ctx.fillStyle='rgba(0,0,0,0.2)';ctx.beginPath();ctx.arc(c.x+2,c.y+2,rr,0,Math.PI*2);ctx.fill();ctx.fillStyle=c.col;ctx.beginPath();ctx.arc(c.x,c.y,rr,0,Math.PI*2);ctx.fill();ctx.strokeStyle='rgba(0,0,0,0.4)';ctx.lineWidth=Math.max(2,rr*0.08);ctx.stroke();if(rr>15){ctx.fillStyle='#fff';ctx.font=`bold ${Math.max(10,rr/3)}px sans-serif`;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(name,c.x,c.y);}});
+    ctx.restore();
+
+    const srt=[p,...bs].filter(e=>e.cells.length>0).sort((a,b)=>b.tm-a.tm).slice(0,5);
+    const lst=document.getElementById('lb-list');lst.innerHTML='';
+    srt.forEach(e=>{const li=document.createElement('li');li.innerHTML=`<span class="dot" style="background:${e.col};"></span>${e.name} (${Math.floor(e.tm)})`;lst.appendChild(li);});
+
+    requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
